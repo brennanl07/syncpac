@@ -1,0 +1,5 @@
+{
+    "reportUnusedVariable": "information",
+    "reportUnusedCallResult": "none",
+    "reportAny": "hint"
+}
