@@ -2,68 +2,87 @@
 
 # AI was not used in this script a single time, nor was it used for consultation
 
+from enum import IntEnum
 import os
 import shutil
 import sys
 import argparse
 import subprocess
-import threading
 import time
 
 package_list_directory_path : str = os.environ.get("SYNCPAC_PATH", "")
 if package_list_directory_path == "":
     package_list_directory_path = os.environ["HOME"] + "/.syncpac"
 
-parser = argparse.ArgumentParser(
-    color=False,
-    prog="syncpac", 
-    description="A program for managing pacman/aur packages across computers with synced user folders, on Arch based Linux distros. " +
-                "(Not confirmed to work on all Arch based Linux distros. Just mine.)")
+class ExitCode(IntEnum):
+    SUCCESS = 0
+    EXCEPTION_OCCURRED      = 1
+    SYNCPAC_NOT_INITIALIZED = 2
+    INVALID_PACKAGES        = 3
+    AUR_BACKEND_MISSING     = 4
 
-parser.add_argument("--aur-backend", default="yay", metavar="yay",
-    help="select which backend to use for aur packages")
+    # > 100 is for when options are refused, for ease of numbering
+    REFUSE_AUR_USAGE        = 101
+    REFUSE_SYNCPAC_INIT     = 102
 
-subparser = parser.add_subparsers(dest="action", required=True)
+def get_parsed_args():
+    parser = argparse.ArgumentParser(
+        color=False,
+        prog="syncpac", 
+        description="A program for managing pacman/aur packages across computers with synced user folders, on Arch based Linux distros. " +
+                    "(Not confirmed to work on all Arch based Linux distros. Just mine.)")
 
+    parser.add_argument("--aur-backend", default="yay", metavar="yay",
+        help="select which backend to use for aur packages")
 
-modify_parent_parser = argparse.ArgumentParser(add_help=False)
-
-modify_parent_parser.add_argument("-a", "--aur", action="store_true",
-    help="add/remove aur packages")
-
-modify_parent_parser.add_argument("-f", "--force", action="store_true",
-    help="make syncpac ignore package validity")
-
-modify_parent_parser.add_argument("-n", "--no-sync", action="store_true",
-    help="don't automatically use the sync command after modifying package list(s)")
-
-modify_parent_parser.add_argument("--confirm-aur", action="store_true",
-    help="skip the aur warning")
-
-modify_parent_parser.add_argument("packages", nargs="+",
-    help="the packages to be used")
+    subparser = parser.add_subparsers(dest="action", required=True)
 
 
-sync_parent_parser = argparse.ArgumentParser(add_help=False)
+    modify_parent_parser = argparse.ArgumentParser(add_help=False)
 
-sync_parent_parser.add_argument("-u", "--update", action="store_true",
-    help="use -Syu instead of -S with the package backends, which will update the system")
+    modify_parent_parser.add_argument("-a", "--aur", action="store_true",
+        help="add/remove aur packages")
+
+    modify_parent_parser.add_argument("-f", "--force", action="store_true",
+        help="make syncpac ignore package validity")
+
+    modify_parent_parser.add_argument("-n", "--no-sync", action="store_true",
+        help="don't automatically use the sync command after modifying package list(s)")
+
+    modify_parent_parser.add_argument("--confirm-aur", action="store_true",
+        help="skip the aur warning")
+
+    modify_parent_parser.add_argument("packages", nargs="+",
+        help="the packages to be used")
 
 
-install_desc = "install a package, adding it to the install list (and removing from the remove list, if applicable)"
-install_parser = subparser.add_parser("install", description=install_desc, help=install_desc, parents = [ modify_parent_parser, sync_parent_parser ])
-remove_desc = "remove a package, adding it to the remove list (and removing from the install list, if applicable)"
-remove_parser = subparser.add_parser("remove", description=remove_desc, help=remove_desc, parents = [ modify_parent_parser, sync_parent_parser ])
+    sync_parent_parser = argparse.ArgumentParser(add_help=False)
 
-sync_desc = "installs/uninstalls packages according to the install/remove list, respectively (includes aur packages)"
-sync_parser = subparser.add_parser("sync", description=sync_desc, help=sync_desc, parents = [ sync_parent_parser ])
+    sync_parent_parser.add_argument("-u", "--update", action="store_true",
+        help="use -Syu instead of -S with the package backends, which will update the system")
 
-init_desc = "initializes syncpac (use $SYNCPAC_PATH to change it from the default `$HOME/.syncpac`)"
-init_parser = subparser.add_parser("init", description=init_desc, help=init_desc)
+    desc_format_string = "{add_to} a package, which adds it to the {add_to} list " + \
+                         "(and removing from the {remove_from} list, if applicable)"
+    install_desc = desc_format_string.format(add_to="install", remove_from="remove")
+    remove_desc  = desc_format_string.format(add_to="remove",  remove_from="install")
+    subparser.add_parser("install", aliases="S", description=install_desc, help=install_desc,
+        parents = [ sync_parent_parser, modify_parent_parser ])
+    subparser.add_parser("remove",  aliases="R", description=remove_desc,  help=remove_desc,
+        parents = [ sync_parent_parser, modify_parent_parser ])
 
+    sync_desc = "install/uninstall packages according to the install/remove list, respectively (includes aur packages)"
+    subparser.add_parser("sync", description=sync_desc, help=sync_desc, parents = [ sync_parent_parser ])
 
-parsed_args = parser.parse_args()
+    init_desc = "initializes syncpac (use $SYNCPAC_PATH to change it from the default `$HOME/.syncpac`)"
+    init_parser = subparser.add_parser("init", description=init_desc, help=init_desc)
+    init_parser.add_argument("-c", "--confirm", action="store_true",
+        help="skip the selection sequence, installing all packages")
+    init_parser.add_argument("-f", "--force", action="store_true",
+        help="don't prompt for syncpac folder deletion")
 
+    return parser.parse_args()
+
+parsed_args = get_parsed_args()
 
 class ModifyCommandArgs:
     possible_actions : list[str] = [ "install", "remove" ]
@@ -77,20 +96,19 @@ class ModifyCommandArgs:
     package_list_install_path : str
     package_list_remove_path : str
 
-    @staticmethod
-    def get_package_list_path(use_install_list : bool, use_aur : bool) -> str:
+    def get_package_list_path(self, use_install_list : bool) -> str:
 
         # Adding the `/` for safety reasons
-        package_list_path = package_list_directory_path + "/" + ("aur" if use_aur else "pacman")
+        package_list_path = package_list_directory_path + "/" + ("aur" if self.use_aur else "pacman")
 
         # Using parsed_args here is a shortcut. But since it's a single script, i don't foresee any issues
-        if use_aur and shutil.which(parsed_args.aur_backend) is None:
+        if self.use_aur and shutil.which(parsed_args.aur_backend) is None:
             print(f"{parsed_args.aur_backend} command not found! If you understand the pros and cons of the AUR, try installing something like `yay`.\nExiting.")
-            sys.exit(3)
+            sys.exit(ExitCode.AUR_BACKEND_MISSING)
 
-        return package_list_path + "-install.txt" if use_install_list else "-remove.txt"
+        return package_list_path + ("-install.txt" if use_install_list else "-remove.txt")
 
-    def get_package_list_self_path(self) -> str:
+    def get_main_package_list_path(self) -> str:
         if self.is_action_install:
             return self.package_list_install_path
         else:
@@ -101,29 +119,50 @@ class ModifyCommandArgs:
         return cls(action == "install", use_aur, ignore_package_validity, packages)
 
     def __init__(self, is_action_install : bool, use_aur : bool, ignore_package_validity : bool = False, packages : list[str] | None = None):
-        # if action not in ModifyCommand.possible_actions:
-        #     print(f"The choice {action} was invalid. This message should be unreachable.")
-        #     sys.exit(69)
-
         self.package_command = parsed_args.aur_backend if use_aur else "pacman"
         self.is_action_install = is_action_install
         self.use_aur = use_aur
         self.ignore_package_validity = ignore_package_validity
         self.packages = packages if packages else []
 
-        self.package_list_install_path = self.get_package_list_path(True, use_aur)
-        self.package_list_remove_path  = self.get_package_list_path(False, use_aur)
-
-all_modify_command_states : list[ModifyCommandArgs] = []
-# I don't enjoy this code. I enjoy most list comprehensions though
-#[ ModifyCommandArgs(i % 2 == 0, i // 2 == 0) for i in range(0, 4) ]
+        self.package_list_install_path = self.get_package_list_path(True)
+        self.package_list_remove_path  = self.get_package_list_path(False)
 
 # The order of all_modify_command_states should not matter. Part of the last refactor was to rectify that
-# However, I enjoy having the order of pac install, pac remove, aur install, aur remove
-for i in range(0, 4):#
-    install    : bool = i %  2 == 0 # i, r, i, r
-    use_pacman : bool = i // 2 == 0 # p, p, a, a
-    all_modify_command_states.append(ModifyCommandArgs(install, use_pacman))
+# However, I enjoy having this order.
+all_modify_command_states : list[ModifyCommandArgs] = [
+    ModifyCommandArgs(True, False), ModifyCommandArgs(False, False),
+    ModifyCommandArgs(True, True),  ModifyCommandArgs(False, True)
+]
+
+# Note: This is wrapped in a try except.
+def main():
+    action_arg : str = parsed_args.action
+
+    if action_arg != "init" and not os.path.exists(package_list_directory_path) and \
+        (not os.path.exists(ModifyCommandArgs(True, False).package_list_install_path) or \
+        not os.path.exists(ModifyCommandArgs(True, True).package_list_install_path)):
+        print("syncpac has not been initialized. Try running the `init` command!")
+        sys.exit(ExitCode.SYNCPAC_NOT_INITIALIZED)
+
+    if action_arg in ModifyCommandArgs.possible_actions:
+        command_args = ModifyCommandArgs.from_arguments(
+            action_arg, parsed_args.aur,
+            parsed_args.force, parsed_args.packages)
+
+        if parsed_args.confirm_aur == False and command_args.use_aur:
+            if not get_user_input("Are you sure you'd like to use the AUR?", False):
+                print("Great choice! Exiting.")
+                sys.exit(ExitCode.REFUSE_AUR_USAGE)
+
+        do_modify_command(command_args)
+
+        if not parsed_args.no_sync:
+            do_sync_command(parsed_args.update)
+    elif action_arg == "sync":
+        do_sync_command(parsed_args.update)
+    elif action_arg == "init":
+        do_init_command()
 
 
 
@@ -131,66 +170,51 @@ def get_stripped_package_list_line(package_list_line : str) -> str:
     # Add support for bash/python style comments anywhere in the line
     return package_list_line.split("#", 1)[0].strip()
 
-# def get_package_command_from_arg(action_argument : str) -> str:
-#     match len(action_argument):
-#         case 3: return "pacman"
-#         case 6:
-#             if shutil.which("yay") == None:
-#                 print("yay command not found! If you understand the pros and cons of the AUR, try following https://itsfoss.com/install-aur-arch-linux/ \nExiting.")
-#                 sys.exit(3)
-#             return "aur"
-#         case _: sys.exit(4)
+def get_user_input(prompt : str, default_result: bool = True) -> bool:
+    match_against_input : str = 'n' if default_result else 'y'
+    prompt += " [Y/n] " if default_result else " [y/N] "
+    response : str = input(prompt)
+    match_result : bool = len(response) == 0 or response[0].lower() != match_against_input
+    return match_result == default_result
 
 def do_modify_command(modify_command : ModifyCommandArgs):
-    print()
     package_arguments : list[str] = modify_command.packages
-
-    package_command : str  = modify_command.package_command
-
     inputted_packages_to_modify : list[str] = []
 
     if (modify_command.ignore_package_validity):
         inputted_packages_to_modify = package_arguments
     else:
-        existing_packages : list[str] = []
         invalid_packages  : list[str] = []
         for package in package_arguments:
-            package_exists = subprocess.run([package_command, "-Si", package], capture_output=True).returncode == 0
-            (existing_packages if package_exists else invalid_packages).append(package)
+            package_exists = subprocess.run([modify_command.package_command, "-Si", package], capture_output=True).returncode == 0
+            package_list : list[str] = inputted_packages_to_modify if package_exists else invalid_packages
+            package_list.append(package)
 
         if (len(invalid_packages) > 0):
             join_string    : str  = " "
             single_invalid_package : bool = True
             if (len(invalid_packages) >= 2):
                 single_invalid_package = False
-                # The best way to add "and" in string joins (at least, when you're just using it for display)
                 invalid_packages[-1] = "and " + invalid_packages[-1]
-                # The oxford comma is a pleasant side effect of doing this
+                # The oxford comma is a pleasant side effect of this method
                 if (len(invalid_packages) >= 3):
                     join_string = ", "
             
-            format_string_single   : str = "The package {packages} does not exist, so it will not be included. Continue? [y/N] "
-            format_string_multiple : str = "The packages {packages} do not exist, so they will not be included. Continue? [y/N] "
+            format_string_single   : str = "The package {packages} does not exist, so it will not be included."
+            format_string_multiple : str = "The packages {packages} do not exist, so they will not be included."
             format_string : str = format_string_single if single_invalid_package else format_string_multiple
-            continue_confirm_response : str = input(format_string.format(packages = join_string.join(invalid_packages)))
-            if len(continue_confirm_response) == 0 or continue_confirm_response[0].lower() != 'y':
+            prompt : str = format_string.format(packages = join_string.join(invalid_packages))
+            if not get_user_input(prompt + " Continue?"):
                 print("Exiting.")
-                sys.exit(7)
-
-        inputted_packages_to_modify = existing_packages
-
-#     install_list_path : str
-#     remove_list_path : str
-#     if use_pacman:
-#         install_list_path = package_list_add_path
-#         remove_list_path  = package_list_remove_path
-#     else:
-#         install_list_path = package_list_aur_add_path
-#         remove_list_path  = package_list_aur_remove_path
+                sys.exit(ExitCode.INVALID_PACKAGES)
+        
+        print(inputted_packages_to_modify)
 
     def edit_package_list_file(path : str, is_add_list : bool, packages_to_modify : list[str]) -> list[str]:
-        with open(path, "r") as package_list_read:
-            package_list_contents : list[str] = package_list_read.readlines()
+        package_list_contents : list[str] = []
+        if os.path.exists(path):
+            with open(path, "r") as package_list_read:
+                package_list_contents = package_list_read.readlines()
 
         packages_to_modify = list(packages_to_modify)
         for i in reversed(range(0, len(package_list_contents))):
@@ -212,7 +236,8 @@ def do_modify_command(modify_command : ModifyCommandArgs):
                     break
 
         with open(f"{path}", "w") as package_list_file:
-            package_list_contents.sort()
+            # Sort is unnecessary, list contents should already be sorted
+            # package_list_contents.sort()
             package_list_file.writelines(package_list_contents)
         
         return packages_to_modify
@@ -239,11 +264,17 @@ def do_modify_command(modify_command : ModifyCommandArgs):
     else:
         append_to_package_list_file(modify_command.package_list_remove_path, packages_to_modify)
 
-    print(f"Successfully added {"aur " if package_command == "aur" else ""}packages to syncpac lists")
+    print(f"Successfully added {"aur " if modify_command.use_aur else ""}packages to syncpac lists")
 
-def sync_command(update_system : bool):
+
+def do_sync_command(update_system : bool):
+    single_path_exists = False
     for i in range(0, len(all_modify_command_states)):
         modify_command = all_modify_command_states[i]
+        if not os.path.exists(modify_command.get_main_package_list_path()):
+            continue
+
+        single_path_exists = True
         
         args : list[str] = []
         package_command : str = modify_command.package_command
@@ -251,67 +282,70 @@ def sync_command(update_system : bool):
             args.append("sudo")
 
         args.append(package_command)
-        args.append("--needed")
 
         if modify_command.is_action_install:
             args.append("-Syu" if update_system else "-S")
+            args.append("--needed")
         else:
             args.append("-Rs")
 
         # Append all packages
-        with open(modify_command.get_package_list_self_path(), "r") as package_list_file:
+        with open(modify_command.get_main_package_list_path(), "r") as package_list_file:
+            single_package_exists : bool = False
             for line in package_list_file:
                 package_name : str = get_stripped_package_list_line(line)
-                args.append(package_name)
+                if len(package_name) > 0:
+                    single_package_exists = True
+                    args.append(package_name)
+            # If there are no packages, do not run the command.
+            if not single_package_exists: continue
 
+        # The output of this should be processed somehow.
+        # Having the bare output shows a lot of bloat, like packages that are
+        #  already up to date, and packages that have already been removed
+        # However, piping stderr to devnull has some nasty side effects
+        #  (Like removing the y/n prompt)
         subprocess.run(args)
+    
+    if not single_path_exists:
+        print("")
 
-def init_command():
+
+def do_init_command():
     if os.path.exists(package_list_directory_path):
-        confirmation_input : str = input(
-            f"WARNING! Your existing syncpac folder at \"{package_list_directory_path}\" will be removed. Continue? [y/N] ")
-        if len(confirmation_input) == 0 or confirmation_input[0].lower() != 'y':
+        if not get_user_input(f"WARNING! Your existing syncpac folder at \"{package_list_directory_path}\" will be removed. Continue?", False):
             print("Exiting.")
-            sys.exit(20)
-        else:
-            shutil.rmtree(package_list_directory_path)
+            sys.exit(ExitCode.REFUSE_SYNCPAC_INIT)
     
-    print("Initializing...", end="")
-    
-    os.mkdir(package_list_directory_path)
-
-    for modify_command in all_modify_command_states:
-        with open(modify_command.get_package_list_self_path(), 'w') as file:
-            file.write("")
+    print("Initializing...", end="", flush=True)
     
     pacman_list_subprocess = subprocess.run([ "pacman", "-Qeq" ], capture_output=True)
     pacman_init_packages : list[str] = []
     aur_init_packages : list[str] = []
     invalid_init_packages : list[str] = []
 
-    start_time      : float = time.time()
-    last_print_time : float = 0
+    last_print_time : float = time.time()
     print_interval  : float = 1
 
-    for package in [ "INVALID", "test", "pacman" ]:
+    for package in pacman_list_subprocess.stdout.decode().splitlines():
         # Do this instead of multithreading! :]
-        if start_time - last_print_time > print_interval:
-            print(".", end="")
-            last_print_time = time.time()
+        if time.time() - last_print_time > print_interval:
+            print(".", end="", flush=True)
+            last_print_time += 1
 
         pacman_check_subprocess = subprocess.run([ "pacman", "-Si", package ], capture_output=True)
-        aur_check_subprocess = subprocess.run([ parsed_args.aur_backend, "-Si", package ], capture_output=True)
-
         if pacman_check_subprocess.returncode == 0:
             pacman_init_packages.append(package)
-        if aur_check_subprocess.returncode == 0:
-            aur_init_packages.append(package)
         else:
-            invalid_init_packages.append(package)
+            # This check is necessary... at least, I'm mostly sure.
+            # I'm not well-versed in pacman, but I think packages can be 
+            #  explicitly installed without being having a repo assigned to it.
+            aur_check_subprocess = subprocess.run([ parsed_args.aur_backend, "-Si", package ], capture_output=True)
+            if aur_check_subprocess.returncode == 0:
+                aur_init_packages.append(package)
+            else:
+                invalid_init_packages.append(package)
     print("")
-
-    # TEMP: for testing missing package(s)
-    invalid_init_packages.append("INVALID")
 
     invalid_package_count : int = len(invalid_init_packages)
     if invalid_package_count > 0:
@@ -322,35 +356,81 @@ def init_command():
             if invalid_package_count > 2:
                 join_string = ", "
         
-        print(f"The packages {join_string.join(invalid_packages)} were not found. Are you missing a repository?")
-        
+        print(f"The packages {join_string.join(invalid_packages)} were not found, so they will not be included." +
+                "You may be missing a repository.")
+        if not parsed_args.yes and not get_user_input("Continue?", False):
+            sys.exit(ExitCode.INVALID_PACKAGES)
+    
+    
+    index = 0
+    pacman_package_count = len(pacman_init_packages)
+    pacman_packages : list[str] = []
+    aur_packages : list[str] = []
+    pacman_remove_packages : list[str] = []
+    aur_remove_packages : list[str] = []
+    while index < pacman_package_count + len(aur_init_packages):
+        is_aur_package : bool = index >= pacman_package_count
+        format_string = "Include package {}?"
+        desired_package_install_list : list[str] = pacman_packages
+        desired_package_remove_list  : list[str] = pacman_remove_packages
+        package : str
+        if is_aur_package:
+            format_string = "Include aur package {}?"
+            desired_package_install_list = aur_packages
+            desired_package_remove_list = aur_remove_packages
+            package = aur_init_packages[index - pacman_package_count]
+        else:
+            package = pacman_init_packages[index]
 
+        if parsed_args.confirm:
+            desired_package_install_list.append(package)
+        else:
+            options : list[str] = [ "(I)nstall", "(r)emove", "(p)ass" ]
+            if index > 0:
+                options.append("(b)ack")
+            action_result : str = input(format_string.format(package) + f" [{'/'.join(options)}] ")
+            if len(action_result) == 0:
+                # YES, this is the recommended input installing packages! Thank you! Thank you so much!
+                action_result = 'INSTALL 4 ME PLEASE!!!'
+            
+            match action_result[0].lower():
+                case 'b':
+                    if index > 0:
+                        index -= 1
+                    continue
+                case 'p':
+                    pass
+                case 'r':
+                    desired_package_remove_list.append(package)
+                case _:
+                    desired_package_install_list.append(package)
 
+        index += 1
 
-action_arg : str = parsed_args.action
+    # Remove files after the major workload is done, so that
+    #  cancelling in the middle will not lead to deletion
+    shutil.rmtree(package_list_directory_path)
+    os.mkdir(package_list_directory_path)
+    
+    for modify_command in all_modify_command_states:
+        path : str = modify_command.get_main_package_list_path()
+        package_list : list[str]
+        if modify_command.is_action_install:
+            package_list = aur_packages if modify_command.use_aur else pacman_packages
+        else:
+            package_list = aur_remove_packages if modify_command.use_aur else pacman_remove_packages
 
-if action_arg != "init" and (not os.path.exists(package_list_directory_path) \
-    or len(os.listdir(package_list_directory_path)) < 4):
-    print("syncpac has not been initialized. Try running the `init` command!")
+        with open(path, "x") as package_list_file:
+            package_list_file.write("")
+            
+        with open(path, "a") as package_list_file:
+            for package in package_list:
+                package_list_file.write(package + "\n")
+    
+    print("syncpac is initialized! :]")
 
-
-if action_arg in ModifyCommandArgs.possible_actions:
-
-    command_args = ModifyCommandArgs.from_arguments(
-        action_arg, parsed_args.aur,
-        parsed_args.packages, parsed_args.force)
-
-    if parsed_args.confirm_aur == False and command_args.is_action_install:
-        aur_confirm_response : str = input("Are you sure you'd like to use the AUR? [y/N] ")
-        if len(aur_confirm_response) == 0 or aur_confirm_response[0].lower() != 'y':
-            print("Great choice. Exiting!")
-            sys.exit(6)
-
-    do_modify_command(command_args)
-
-    if not parsed_args.no_sync:
-        sync_command(parsed_args.update)
-elif action_arg == "sync":
-    sync_command(parsed_args.update)
-elif action_arg == "init":
-    init_command()
+try:
+    main()
+except KeyboardInterrupt as e:
+    print("\nExiting.")
+    pass
