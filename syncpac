@@ -340,7 +340,7 @@ def do_init_command():
         else:
             # This check is necessary... at least, I'm mostly sure.
             # I'm not well-versed in pacman, but I think packages can be 
-            #  explicitly installed without being having a repo assigned to it.
+            #  explicitly installed without having a repo assigned to it.
             aur_check_subprocess = subprocess.run([ parsed_args.aur_backend, "-Si", package ], capture_output=True)
             if aur_check_subprocess.returncode == 0:
                 aur_init_packages.append(package)
@@ -369,51 +369,6 @@ def do_init_command():
     
     pacman_packages : list[str] = pacman_init_packages
     aur_packages : list[str] = aur_init_packages
-
-    # index = 0
-    # pacman_package_count = len(pacman_init_packages)
-    # pacman_packages : list[str] = []
-    # aur_packages : list[str] = []
-    # pacman_remove_packages : list[str] = []
-    # aur_remove_packages : list[str] = []
-    # while index < pacman_package_count + len(aur_init_packages):
-    #     is_aur_package : bool = index >= pacman_package_count
-    #     format_string = "Include package {}?"
-    #     desired_package_install_list : list[str] = pacman_packages
-    #     desired_package_remove_list  : list[str] = pacman_remove_packages
-    #     package : str
-    #     if is_aur_package:
-    #         format_string = "Include aur package {}?"
-    #         desired_package_install_list = aur_packages
-    #         desired_package_remove_list = aur_remove_packages
-    #         package = aur_init_packages[index - pacman_package_count]
-    #     else:
-    #         package = pacman_init_packages[index]
-
-    #     if parsed_args.confirm:
-    #         desired_package_install_list.append(package)
-    #     else:
-    #         options : list[str] = [ "(I)nstall", "(r)emove", "(p)ass" ]
-    #         if index > 0:
-    #             options.append("(b)ack")
-    #         action_result : str = input(format_string.format(package) + f" [{'/'.join(options)}] ")
-    #         if len(action_result) == 0:
-    #             # YES, this is the recommended input installing packages! Thank you! Thank you so much!
-    #             action_result = 'INSTALL 4 ME PLEASE!!!'
-            
-    #         match action_result[0].lower():
-    #             case 'b':
-    #                 if index > 0:
-    #                     index -= 1
-    #                 continue
-    #             case 'p':
-    #                 pass
-    #             case 'r':
-    #                 desired_package_remove_list.append(package)
-    #             case _:
-    #                 desired_package_install_list.append(package)
-
-    #     index += 1
 
     # Remove files after the major workload is done, so that
     #  cancelling in the middle will not lead to deletion
