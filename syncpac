@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 
-# AI was not used in this script a single time, nor was it used for consultation
+# The only time I've used AI in the past year was to make
+# it spam an eggplant emoji until it hit the 16 bit limit
 
 from enum import IntEnum
+from math import ceil
 import os
 import shutil
 import sys
 import argparse
 import subprocess
-import time
 
 package_list_directory_path : str = os.environ.get("SYNCPAC_PATH", "")
 if package_list_directory_path == "":
@@ -139,6 +140,9 @@ all_modify_command_states : list[ModifyCommandArgs] = [
 def main():
     action_arg : str = parsed_args.action
 
+    if   action_arg == "S": action_arg = "install"
+    elif action_arg == "R": action_arg = "remove"
+
     if action_arg != "init" and not os.path.exists(package_list_directory_path) and \
         (not os.path.exists(ModifyCommandArgs(True, False).package_list_install_path) or \
         not os.path.exists(ModifyCommandArgs(True, True).package_list_install_path)):
@@ -204,7 +208,7 @@ def do_modify_command(modify_command : ModifyCommandArgs):
             format_string_multiple : str = "The packages {packages} do not exist, so they will not be included."
             format_string : str = format_string_single if single_invalid_package else format_string_multiple
             prompt : str = format_string.format(packages = join_string.join(invalid_packages))
-            if not get_user_input(prompt + " Continue?"):
+            if not get_user_input(prompt + " Continue?", False):
                 print("Exiting.")
                 sys.exit(ExitCode.INVALID_PACKAGES)
         
@@ -317,21 +321,18 @@ def do_init_command():
             print("Exiting.")
             sys.exit(ExitCode.REFUSE_SYNCPAC_INIT)
     
-    print("Initializing...", end="", flush=True)
     
     pacman_list_subprocess = subprocess.run([ "pacman", "-Qeq" ], capture_output=True)
     pacman_init_packages : list[str] = []
     aur_init_packages : list[str] = []
     invalid_init_packages : list[str] = []
 
-    last_print_time : float = time.time()
-    print_interval  : float = 1
+    all_installed_packages = pacman_list_subprocess.stdout.decode().splitlines()
 
-    for package in pacman_list_subprocess.stdout.decode().splitlines():
-        # Do this instead of multithreading! :]
-        if time.time() - last_print_time > print_interval:
-            print(".", end="", flush=True)
-            last_print_time += 1
+    package_index : int = 0
+    for package in all_installed_packages:
+
+        print(f"\rInitializing... {ceil((package_index / len(all_installed_packages)) * 100)}%", end="", flush=True)
 
         pacman_check_subprocess = subprocess.run([ "pacman", "-Si", package ], capture_output=True)
         if pacman_check_subprocess.returncode == 0:
@@ -345,6 +346,11 @@ def do_init_command():
                 aur_init_packages.append(package)
             else:
                 invalid_init_packages.append(package)
+            
+            # Alternative way to check for an aur package, takes about the same amount of time
+            # if urllib.request.urlopen(f"https://aur.archlinux.org/rpc/v5/search/{package}").status == "200":
+
+        package_index += 1
     print("")
 
     invalid_package_count : int = len(invalid_init_packages)
@@ -361,71 +367,81 @@ def do_init_command():
         if not parsed_args.yes and not get_user_input("Continue?", False):
             sys.exit(ExitCode.INVALID_PACKAGES)
     
-    
-    index = 0
-    pacman_package_count = len(pacman_init_packages)
-    pacman_packages : list[str] = []
-    aur_packages : list[str] = []
-    pacman_remove_packages : list[str] = []
-    aur_remove_packages : list[str] = []
-    while index < pacman_package_count + len(aur_init_packages):
-        is_aur_package : bool = index >= pacman_package_count
-        format_string = "Include package {}?"
-        desired_package_install_list : list[str] = pacman_packages
-        desired_package_remove_list  : list[str] = pacman_remove_packages
-        package : str
-        if is_aur_package:
-            format_string = "Include aur package {}?"
-            desired_package_install_list = aur_packages
-            desired_package_remove_list = aur_remove_packages
-            package = aur_init_packages[index - pacman_package_count]
-        else:
-            package = pacman_init_packages[index]
+    pacman_packages : list[str] = pacman_init_packages
+    aur_packages : list[str] = aur_init_packages
 
-        if parsed_args.confirm:
-            desired_package_install_list.append(package)
-        else:
-            options : list[str] = [ "(I)nstall", "(r)emove", "(p)ass" ]
-            if index > 0:
-                options.append("(b)ack")
-            action_result : str = input(format_string.format(package) + f" [{'/'.join(options)}] ")
-            if len(action_result) == 0:
-                # YES, this is the recommended input installing packages! Thank you! Thank you so much!
-                action_result = 'INSTALL 4 ME PLEASE!!!'
+    # index = 0
+    # pacman_package_count = len(pacman_init_packages)
+    # pacman_packages : list[str] = []
+    # aur_packages : list[str] = []
+    # pacman_remove_packages : list[str] = []
+    # aur_remove_packages : list[str] = []
+    # while index < pacman_package_count + len(aur_init_packages):
+    #     is_aur_package : bool = index >= pacman_package_count
+    #     format_string = "Include package {}?"
+    #     desired_package_install_list : list[str] = pacman_packages
+    #     desired_package_remove_list  : list[str] = pacman_remove_packages
+    #     package : str
+    #     if is_aur_package:
+    #         format_string = "Include aur package {}?"
+    #         desired_package_install_list = aur_packages
+    #         desired_package_remove_list = aur_remove_packages
+    #         package = aur_init_packages[index - pacman_package_count]
+    #     else:
+    #         package = pacman_init_packages[index]
+
+    #     if parsed_args.confirm:
+    #         desired_package_install_list.append(package)
+    #     else:
+    #         options : list[str] = [ "(I)nstall", "(r)emove", "(p)ass" ]
+    #         if index > 0:
+    #             options.append("(b)ack")
+    #         action_result : str = input(format_string.format(package) + f" [{'/'.join(options)}] ")
+    #         if len(action_result) == 0:
+    #             # YES, this is the recommended input installing packages! Thank you! Thank you so much!
+    #             action_result = 'INSTALL 4 ME PLEASE!!!'
             
-            match action_result[0].lower():
-                case 'b':
-                    if index > 0:
-                        index -= 1
-                    continue
-                case 'p':
-                    pass
-                case 'r':
-                    desired_package_remove_list.append(package)
-                case _:
-                    desired_package_install_list.append(package)
+    #         match action_result[0].lower():
+    #             case 'b':
+    #                 if index > 0:
+    #                     index -= 1
+    #                 continue
+    #             case 'p':
+    #                 pass
+    #             case 'r':
+    #                 desired_package_remove_list.append(package)
+    #             case _:
+    #                 desired_package_install_list.append(package)
 
-        index += 1
+    #     index += 1
 
     # Remove files after the major workload is done, so that
     #  cancelling in the middle will not lead to deletion
     shutil.rmtree(package_list_directory_path)
     os.mkdir(package_list_directory_path)
     
-    for modify_command in all_modify_command_states:
-        path : str = modify_command.get_main_package_list_path()
-        package_list : list[str]
-        if modify_command.is_action_install:
-            package_list = aur_packages if modify_command.use_aur else pacman_packages
-        else:
-            package_list = aur_remove_packages if modify_command.use_aur else pacman_remove_packages
+    
+    editor : str | None = os.environ.get("EDITOR")
+    if editor is None:
+        editor = "nano"
 
-        with open(path, "x") as package_list_file:
+    # Check if editor exists, ask for fallback if it doesn't
+    while 0 == len(subprocess.run(["which", editor], capture_output=True).stdout):
+        editor = input(f"editor \"{editor}\" unavailable, input a fallback: ")
+
+    for modify_command in [ ModifyCommandArgs(True, False), ModifyCommandArgs(True, True) ]:
+        package_list_path : str = modify_command.get_main_package_list_path()
+        package_list : list[str] = aur_packages if modify_command.use_aur else pacman_packages
+
+        with open(package_list_path, "x") as package_list_file:
             package_list_file.write("")
             
-        with open(path, "a") as package_list_file:
+        with open(package_list_path, "a") as package_list_file:
             for package in package_list:
                 package_list_file.write(package + "\n")
+
+        if len(package_list) > 0 and get_user_input(f"edit {modify_command.package_command} list?", True):
+            subprocess.run([editor, package_list_path])
     
     print("syncpac is initialized! :]")
 
