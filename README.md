@@ -15,7 +15,7 @@ Run `syncpac init`, and optionally edit the resulting list of pacman/aur package
 
 ## Usage
 
-After initializing syncpac, pacman packages that are meant to be synced can be installed with `syncpac install {package}` (or `syncpac S {package}`). Pacman packages that are meant to be removed from all synced systems can be removed with `syncpac install {package}`.
+After initializing syncpac, pacman packages that are meant to be synced can be installed with `syncpac install {packages...}` (or `syncpac S {packages...}`). Pacman packages that are meant to be removed from all synced systems can be removed with `syncpac remove {packages...}` (or `syncpac R {packages...}`).
 To modify aur packages, use the `--aur` argument.
 
 ## Notes
