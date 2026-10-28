@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 
-# The only time I've used AI in the past year was to make
-# it spam an eggplant emoji until it hit the 16 bit limit
-
 from enum import IntEnum
-from math import ceil
+import math
 import os
 import shutil
 import sys
@@ -30,11 +27,12 @@ def get_parsed_args():
     parser = argparse.ArgumentParser(
         color=False,
         prog="syncpac", 
-        description="A program for managing pacman/aur packages across computers with synced user folders, on Arch based Linux distros. " +
-                    "(Not confirmed to work on all Arch based Linux distros. Just mine.)")
+        description=
+            "A program for managing pacman/aur packages across computers" +
+            "with synced user folders, on Arch based Linux distros.")
 
     parser.add_argument("--aur-backend", default="yay", metavar="yay",
-        help="select which backend to use for aur packages")
+        help="Select which backend to use for aur packages")
 
     subparser = parser.add_subparsers(dest="action", required=True)
 
@@ -42,44 +40,45 @@ def get_parsed_args():
     modify_parent_parser = argparse.ArgumentParser(add_help=False)
 
     modify_parent_parser.add_argument("-a", "--aur", action="store_true",
-        help="add/remove aur packages")
+        help="Add/remove aur packages")
 
     modify_parent_parser.add_argument("-f", "--force", action="store_true",
-        help="make syncpac ignore package validity")
+        help="Make syncpac ignore package validity")
 
     modify_parent_parser.add_argument("-n", "--no-sync", action="store_true",
-        help="don't automatically use the sync command after modifying package list(s)")
+        help="Don't automatically use the sync command after modifying package list(s)")
 
     modify_parent_parser.add_argument("--confirm-aur", action="store_true",
-        help="skip the aur warning")
+        help="Skip the aur warning")
 
     modify_parent_parser.add_argument("packages", nargs="+",
-        help="the packages to be used")
+        help="The packages to be used")
 
 
     sync_parent_parser = argparse.ArgumentParser(add_help=False)
 
     sync_parent_parser.add_argument("-u", "--update", action="store_true",
-        help="use -Syu instead of -S with the package backends, which will update the system")
+        help="Use -Syu instead of -S with the package backends, which will update the system")
 
-    desc_format_string = "{add_to} a package, which adds it to the {add_to} list " + \
-                         "(and removing from the {remove_from} list, if applicable)"
-    install_desc = desc_format_string.format(add_to="install", remove_from="remove")
-    remove_desc  = desc_format_string.format(add_to="remove",  remove_from="install")
+    def desc_format_string(add_to : str, remove_from : str):
+        return f"{add_to} a package, which adds it to the {add_to.lower()} list " + \
+                f"(and removing from the {remove_from} list, if applicable)"
+    install_desc = desc_format_string("Install", "remove")
+    remove_desc  = desc_format_string("Remove",  "install")
     subparser.add_parser("install", aliases="S", description=install_desc, help=install_desc,
         parents = [ sync_parent_parser, modify_parent_parser ])
     subparser.add_parser("remove",  aliases="R", description=remove_desc,  help=remove_desc,
         parents = [ sync_parent_parser, modify_parent_parser ])
 
-    sync_desc = "install/uninstall packages according to the install/remove list, respectively (includes aur packages)"
+    sync_desc = "Install/uninstall packages according to the install/remove list, respectively (includes aur packages)"
     subparser.add_parser("sync", description=sync_desc, help=sync_desc, parents = [ sync_parent_parser ])
 
-    init_desc = "initializes syncpac (use $SYNCPAC_PATH to change it from the default `$HOME/.syncpac`)"
+    init_desc = "Initializes syncpac (use $SYNCPAC_PATH to change it from the default `$HOME/.syncpac`)"
     init_parser = subparser.add_parser("init", description=init_desc, help=init_desc)
     init_parser.add_argument("-c", "--confirm", action="store_true",
-        help="skip the selection sequence, installing all packages")
+        help="Skip the selection sequence, installing all packages")
     init_parser.add_argument("-f", "--force", action="store_true",
-        help="don't prompt for syncpac folder deletion")
+        help="Don't prompt for syncpac folder deletion")
 
     return parser.parse_args()
 
@@ -146,7 +145,7 @@ def main():
     if action_arg != "init" and not os.path.exists(package_list_directory_path) and \
         (not os.path.exists(ModifyCommandArgs(True, False).package_list_install_path) or \
         not os.path.exists(ModifyCommandArgs(True, True).package_list_install_path)):
-        print("syncpac has not been initialized. Try running the `init` command!")
+        print("Syncpac has not been initialized. Try running the `init` command!")
         sys.exit(ExitCode.SYNCPAC_NOT_INITIALIZED)
 
     if action_arg in ModifyCommandArgs.possible_actions:
@@ -332,7 +331,7 @@ def do_init_command():
     package_index : int = 0
     for package in all_installed_packages:
 
-        print(f"\rInitializing... {ceil((package_index / len(all_installed_packages)) * 100)}%", end="", flush=True)
+        print(f"\rInitializing... {math.ceil((package_index / len(all_installed_packages)) * 100)}%", end="", flush=True)
 
         pacman_check_subprocess = subprocess.run([ "pacman", "-Si", package ], capture_output=True)
         if pacman_check_subprocess.returncode == 0:
@@ -382,7 +381,7 @@ def do_init_command():
 
     # Check if editor exists, ask for fallback if it doesn't
     while 0 == len(subprocess.run(["which", editor], capture_output=True).stdout):
-        editor = input(f"editor \"{editor}\" unavailable, input a fallback: ")
+        editor = input(f"Editor \"{editor}\" unavailable, input a fallback: ")
 
     for modify_command in [ ModifyCommandArgs(True, False), ModifyCommandArgs(True, True) ]:
         package_list_path : str = modify_command.get_main_package_list_path()
@@ -398,10 +397,9 @@ def do_init_command():
         if len(package_list) > 0 and get_user_input(f"edit {modify_command.package_command} list?", True):
             subprocess.run([editor, package_list_path])
     
-    print("syncpac is initialized! :]")
+    print("Syncpac is initialized! :]")
 
 try:
     main()
 except KeyboardInterrupt as e:
     print("\nExiting.")
-    pass
